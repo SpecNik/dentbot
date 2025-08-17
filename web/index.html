@@ -1,36 +1,183 @@
 <!doctype html>
-<html>
+<html lang="ru">
 <head>
   <meta charset="utf-8" />
-  <title>My Telegram Mini App</title>
-  <meta name="viewport" content="width=device-width,initial-scale=1" />
+  <meta name="viewport" content="width=device-width, initial-scale=1" />
+  <title>DentBot — запись</title>
   <script src="https://telegram.org/js/telegram-web-app.js"></script>
   <style>
-    body { font-family: system-ui, -apple-system, Segoe UI, Roboto, Arial; margin: 16px; }
-    .card { padding: 16px; border: 1px solid #ddd; border-radius: 12px; }
-    button { padding: 10px 14px; border: none; border-radius: 8px; }
+    :root{--bg:#fff;--fg:#111;--muted:#6b7280;--card:#f6f7f9;--accent:#4c8bf5;--danger:#e74c3c;--radius:16px}
+    *{box-sizing:border-box}
+    html,body{margin:0;padding:0;font-family:system-ui,-apple-system,Segoe UI,Roboto,Arial,sans-serif}
+    body{background:var(--bg);color:var(--fg);padding:16px}
+    h1{font-size:20px;margin:0 0 12px}
+    .muted{color:var(--muted)}
+    .card{background:var(--card);border-radius:var(--radius);padding:16px;margin-bottom:16px}
+    label{display:block;font-size:13px;margin-bottom:6px}
+    input,textarea,select{width:100%;padding:10px 12px;border-radius:12px;border:1px solid #ddd;background:#fff;color:#111}
+    .row{display:grid;grid-template-columns:1fr 1fr;gap:12px}
+    button{padding:12px 16px;border:0;border-radius:12px;background:var(--accent);color:#fff;cursor:pointer}
+    button[disabled]{opacity:.6;cursor:not-allowed}
+    .btn-danger{background:var(--danger)}
+    .appt{display:grid;grid-template-columns:1fr auto;gap:8px;align-items:center;padding:12px;border-radius:12px;background:#fff;border:1px solid #eee;margin-bottom:8px}
+    .appt .title{font-weight:600}
+    .empty{text-align:center;padding:24px;color:var(--muted)}
+    footer{text-align:center;color:var(--muted);font-size:12px;margin-top:16px}
   </style>
 </head>
 <body>
-  <h2>Hi, <span id="user">guest</span> 👋</h2>
+  <h1>DentBot <span class="muted">• запись к врачу</span></h1>
+
   <div class="card">
-    <p>Это Telegram Mini App. Нажми, чтобы отправить данные в бота.</p>
-    <button id="send">Send data to bot</button>
+    <h3 style="margin-top:0">Новая запись</h3>
+    <div class="row">
+      <div>
+        <label>Имя пациента</label>
+        <input id="name" placeholder="Иван Иванов" />
+      </div>
+      <div>
+        <label>Телефон</label>
+        <input id="phone" placeholder="+7 900 000-00-00" />
+      </div>
+    </div>
+    <div class="row" style="margin-top:12px">
+      <div>
+        <label>Дата</label>
+        <input id="date" type="date" />
+      </div>
+      <div>
+        <label>Время</label>
+        <input id="time" type="time" />
+      </div>
+    </div>
+    <div style="margin-top:12px">
+      <label>Комментарий</label>
+      <textarea id="notes" rows="3" placeholder="Болит зуб / чистка и т.п."></textarea>
+    </div>
+    <div style="margin-top:12px;display:flex;gap:8px;flex-wrap:wrap">
+      <button id="saveLocal">Сохранить локально</button>
+      <button id="sendToBot" class="btn-danger" title="Отправить боту и закрыть">Отправить боту</button>
+      <button id="saveCloud">Сохранить в БД</button>
+    </div>
   </div>
 
+  <div class="card">
+    <h3 style="margin-top:0">Мои записи (локально)</h3>
+    <div id="list"></div>
+    <div class="empty" id="empty">Пока пусто</div>
+  </div>
+
+  <footer>Данные хранятся локально в браузере. Кнопка «Сохранить в БД» отправляет в Netlify Function.</footer>
+
   <script>
-    const tg = window.Telegram.WebApp;
-    tg.expand();
-    tg.ready();
+    // Telegram WebApp API
+    const tg = window.Telegram?.WebApp;
+    if (tg) { tg.expand(); tg.ready(); }
 
-    const initDataUnsafe = tg.initDataUnsafe || {};
-    const name = initDataUnsafe.user?.first_name || "guest";
-    document.getElementById('user').textContent = name;
+    // Dark mode tweaks
+    const theme = tg?.themeParams || {};
+    if (tg?.colorScheme === 'dark') {
+      document.documentElement.style.setProperty('--bg','#0e0f13');
+      document.documentElement.style.setProperty('--fg','#f2f4f8');
+      document.documentElement.style.setProperty('--muted','#a0a6b0');
+      document.documentElement.style.setProperty('--card','#171923');
+      document.querySelectorAll('input,textarea').forEach(el => {
+        el.style.background='#0e0f13'; el.style.color='#f2f4f8'; el.style.borderColor='#2a2f3a';
+      });
+    }
 
-    document.getElementById('send').onclick = () => {
-      tg.sendData(JSON.stringify({ action: 'clicked', ts: Date.now() }));
-      tg.close();
+    // Helpers
+    const $ = (id) => document.getElementById(id);
+    const listEl = $('list');
+    const emptyEl = $('empty');
+
+    function loadLocal() {
+      try { return JSON.parse(localStorage.getItem('appointments') || '[]'); }
+      catch { return []; }
+    }
+    function saveLocal(items) {
+      localStorage.setItem('appointments', JSON.stringify(items));
+      renderLocal();
+    }
+    function renderLocal() {
+      const items = loadLocal();
+      listEl.innerHTML = '';
+      emptyEl.style.display = items.length ? 'none' : 'block';
+      items.forEach((it, idx) => {
+        const div = document.createElement('div');
+        div.className = 'appt';
+        const title = document.createElement('div');
+        title.innerHTML = `<div class="title">${it.date} ${it.time} — ${it.name}</div><div class="muted">${it.phone || ''} ${it.notes ? ' • ' + it.notes : ''}</div>`;
+        const del = document.createElement('button');
+        del.className = 'btn-danger';
+        del.textContent = 'Удалить';
+        del.onclick = () => { const arr = loadLocal(); arr.splice(idx,1); saveLocal(arr); };
+        div.appendChild(title); div.appendChild(del);
+        listEl.appendChild(div);
+      });
+    }
+
+    function getForm() {
+      return {
+        name: $('name').value.trim(),
+        phone: $('phone').value.trim(),
+        date: $('date').value,
+        time: $('time').value,
+        notes: $('notes').value.trim()
+      };
+    }
+    function validate(f) {
+      if (!f.name) return 'Введите имя';
+      if (!f.date) return 'Выберите дату';
+      if (!f.time) return 'Выберите время';
+      return null;
+    }
+
+    // 1) Сохранить локально
+    $('saveLocal').onclick = () => {
+      const f = getForm(); const err = validate(f);
+      if (err) { (tg ? tg.showAlert(err) : alert(err)); return; }
+      const arr = loadLocal(); arr.push(f); saveLocal(arr);
+      (tg ? tg.showPopup({title:'Сохранено', message:'Локально сохранено ✅'}) : alert('Сохранено'));
     };
+
+    // 2) Отправить боту (и закрыть Mini App)
+    $('sendToBot').onclick = () => {
+      const f = getForm(); const err = validate(f);
+      if (err) { (tg ? tg.showAlert(err) : alert(err)); return; }
+      const payload = { type: 'appointment', payload: f };
+      if (tg?.sendData) {
+        tg.sendData(JSON.stringify(payload));
+        tg.close(); // Телеграм закроет WebApp
+      } else {
+        alert('Вне Telegram отправка боту недоступна. Откройте мини-апп из чата бота.');
+      }
+    };
+
+    // 3) Сохранить в БД через Netlify Function
+    async function saveCloud(f) {
+      // endpoint функции (работает на Netlify после коммита):
+      const url = '/.netlify/functions/create-appointment';
+      const res = await fetch(url, {
+        method: 'POST',
+        headers: { 'Content-Type':'application/json' },
+        body: JSON.stringify({ payload: f, initData: tg?.initDataUnsafe || null })
+      });
+      if (!res.ok) throw new Error(await res.text());
+      return await res.json().catch(() => ({}));
+    }
+    $('saveCloud').onclick = async () => {
+      const f = getForm(); const err = validate(f);
+      if (err) { (tg ? tg.showAlert(err) : alert(err)); return; }
+      try {
+        await saveCloud(f);
+        (tg ? tg.showPopup({title:'Сохранено', message:'Запись сохранена в БД ✅'}) : alert('Сохранено в БД'));
+      } catch (e) {
+        (tg ? tg.showAlert('Ошибка: ' + e.message) : alert('Ошибка: ' + e.message));
+      }
+    };
+
+    renderLocal();
   </script>
 </body>
 </html>
